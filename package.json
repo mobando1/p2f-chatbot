@@ -1,0 +1,34 @@
+{
+  "name": "p2f-chatbot",
+  "version": "1.0.0",
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "dev": "NODE_ENV=development tsx watch src/index.ts",
+    "build": "npm run build:server && npm run build:widget",
+    "build:server": "esbuild src/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist",
+    "build:widget": "cd widget && npx vite build",
+    "start": "NODE_ENV=production node dist/index.js",
+    "db:push": "drizzle-kit push"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@neondatabase/serverless": "^0.10.4",
+    "cors": "^2.8.5",
+    "drizzle-orm": "^0.39.1",
+    "express": "^4.21.2",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.16.11",
+    "drizzle-kit": "^0.30.4",
+    "esbuild": "^0.25.0",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.19"
+  }
+}
