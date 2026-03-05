@@ -11,7 +11,7 @@ export interface StreamEvent {
 export async function* streamChat(
   systemPrompt: string,
   messages: MessageParam[],
-  model: string = "claude-haiku-4-5-20241022",
+  model: string = "claude-haiku-4-5-20251001",
 ): AsyncGenerator<StreamEvent> {
   try {
     const stream = client.messages.stream({
@@ -54,8 +54,8 @@ export function selectModel(messageCount: number, content: string): string {
     );
 
   if (messageCount <= 3 || isSimple) {
-    return "claude-haiku-4-5-20241022";
+    return "claude-haiku-4-5-20251001";
   }
 
-  return "claude-sonnet-4-5-20241022";
+  return "claude-sonnet-4-6-20250514";
 }

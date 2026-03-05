@@ -276,7 +276,8 @@ interface Message {
         assistantDiv.textContent = errMsg;
         messages.push({ role: "assistant", content: errMsg });
       }
-    } catch {
+    } catch (err) {
+      console.error("[chat-widget] Error:", err);
       typingEl.classList.remove("visible");
       const errMsg =
         config.language === "es"
