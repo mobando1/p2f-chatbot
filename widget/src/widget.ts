@@ -256,13 +256,26 @@ interface Message {
               conversationId = data.conversationId;
               localStorage.setItem(CONV_KEY, conversationId!);
             }
-          } catch {
+            if (data.message && !data.text) {
+              throw new Error(data.message);
+            }
+          } catch (e) {
+            if (e instanceof Error && e.message) throw e;
             // Skip non-JSON lines
           }
         }
       }
 
-      messages.push({ role: "assistant", content: fullResponse });
+      if (fullResponse.trim()) {
+        messages.push({ role: "assistant", content: fullResponse });
+      } else {
+        const errMsg =
+          config.language === "es"
+            ? "Lo siento, hubo un error. Por favor intenta de nuevo."
+            : "Sorry, there was an error. Please try again.";
+        assistantDiv.textContent = errMsg;
+        messages.push({ role: "assistant", content: errMsg });
+      }
     } catch {
       typingEl.classList.remove("visible");
       const errMsg =
