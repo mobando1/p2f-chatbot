@@ -16,7 +16,14 @@ export function assembleSystemPrompt(
 
   if (contactInfo?.name || contactInfo?.email) {
     const lines: string[] = [];
-    if (contactInfo.name) lines.push(`Visitor's name: ${contactInfo.name}`);
+    if (contactInfo.name) {
+      lines.push(`Visitor's name: ${contactInfo.name}`);
+      lines.push(
+        language === "es"
+          ? "Este es un visitante que regresa — salúdalo calurosamente por su nombre y continúa ayudando con naturalidad."
+          : "This is a returning visitor — greet them warmly by name and continue helping naturally.",
+      );
+    }
     if (contactInfo.email)
       lines.push(
         `Visitor's email: ${contactInfo.email} (already collected — no need to ask again)`,

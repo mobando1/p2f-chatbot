@@ -43,6 +43,7 @@ interface Message {
   const keyPrefix = apiKey.slice(0, 12);
   const SESSION_KEY = `chat_session_${keyPrefix}`;
   const CONV_KEY = `chat_conv_${keyPrefix}`;
+  const MESSAGES_KEY = `chat_msgs_${keyPrefix}`;
   let sessionId = localStorage.getItem(SESSION_KEY) || crypto.randomUUID();
   localStorage.setItem(SESSION_KEY, sessionId);
   let conversationId: string | null = localStorage.getItem(CONV_KEY);
@@ -87,7 +88,12 @@ interface Message {
             <p>${config.language === "es" ? "En línea • Respuesta inmediata" : "Online • Instant reply"}</p>
           </div>
         </div>
-        <button class="chat-header-close" aria-label="Close">✕</button>
+        <div class="chat-header-actions">
+          <button class="chat-header-btn new-chat-btn" aria-label="${config.language === "es" ? "Nueva conversación" : "New conversation"}" title="${config.language === "es" ? "Nueva conversación" : "New conversation"}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+          </button>
+          <button class="chat-header-btn close-btn" aria-label="Close">✕</button>
+        </div>
       </div>
       <div class="chat-messages" role="log" aria-label="${config.language === "es" ? "Mensajes del chat" : "Chat messages"}" aria-live="polite"></div>
       <div class="typing-indicator" aria-label="${config.language === "es" ? "Escribiendo..." : "Typing..."}" role="status">
@@ -111,7 +117,8 @@ interface Message {
   const bubble = shadow.querySelector(".chat-bubble") as HTMLButtonElement;
   const badgeEl = shadow.querySelector(".unread-badge") as HTMLSpanElement;
   const panel = shadow.querySelector(".chat-panel") as HTMLDivElement;
-  const closeBtn = shadow.querySelector(".chat-header-close") as HTMLButtonElement;
+  const closeBtn = shadow.querySelector(".close-btn") as HTMLButtonElement;
+  const newChatBtn = shadow.querySelector(".new-chat-btn") as HTMLButtonElement;
   const headerTitle = shadow.querySelector(".header-title") as HTMLHeadingElement;
   const messagesEl = shadow.querySelector(".chat-messages") as HTMLDivElement;
   const typingEl = shadow.querySelector(".typing-indicator") as HTMLDivElement;
@@ -140,6 +147,77 @@ interface Message {
     headerTitle.textContent = sc.companyName;
   }
 
+  // --- Message Persistence ---
+
+  function saveMessages() {
+    try {
+      // Keep last 20 messages to stay within localStorage limits
+      const toSave = messages.slice(-20);
+      localStorage.setItem(MESSAGES_KEY, JSON.stringify(toSave));
+    } catch {
+      // localStorage full or unavailable — silently ignore
+    }
+  }
+
+  function restoreMessages(): boolean {
+    try {
+      const stored = localStorage.getItem(MESSAGES_KEY);
+      if (!stored) return false;
+      const parsed: Message[] = JSON.parse(stored);
+      if (!Array.isArray(parsed) || parsed.length === 0) return false;
+
+      // Rebuild messages array and DOM
+      for (const msg of parsed) {
+        messages.push(msg);
+        renderRestoredMessage(msg);
+      }
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Render a restored message (no animation, uses stored timestamp) */
+  function renderRestoredMessage(msg: Message) {
+    const wrapper = document.createElement("div");
+    wrapper.className = `message-wrapper ${msg.role}`;
+
+    const div = document.createElement("div");
+    div.className = `message ${msg.role}`;
+    renderContent(div, msg.content);
+
+    const time = document.createElement("span");
+    time.className = "message-time";
+    time.textContent = formatTime(msg.timestamp);
+
+    wrapper.appendChild(div);
+    wrapper.appendChild(time);
+    messagesEl.appendChild(wrapper);
+  }
+
+  // --- New Conversation ---
+
+  function startNewConversation() {
+    // Clear in-memory state
+    messages.length = 0;
+    conversationId = null;
+
+    // Clear DOM
+    messagesEl.innerHTML = "";
+    quickRepliesEl.innerHTML = "";
+
+    // Clear localStorage
+    localStorage.removeItem(MESSAGES_KEY);
+    localStorage.removeItem(CONV_KEY);
+
+    // Show fresh greeting
+    showGreeting();
+    showQuickReplies();
+  }
+
+  // --- Chat Toggle ---
+
   function toggleChat() {
     isOpen = !isOpen;
     panel.classList.toggle("visible", isOpen);
@@ -150,8 +228,13 @@ interface Message {
       updateBadge();
       input.focus();
       if (messages.length === 0) {
-        showGreeting();
-        showQuickReplies();
+        // Try restoring previous conversation
+        const restored = restoreMessages();
+        if (!restored) {
+          // No previous messages — show greeting for new visitor
+          showGreeting();
+          showQuickReplies();
+        }
       }
     }
   }
@@ -223,6 +306,7 @@ interface Message {
       updateBadge();
     }
 
+    saveMessages();
     return div;
   }
 
@@ -356,11 +440,11 @@ interface Message {
 
       if (fullResponse.trim()) {
         messages.push({ role: "assistant", content: fullResponse, timestamp: Date.now() });
-        // Add timestamp to wrapper
         const time = document.createElement("span");
         time.className = "message-time";
         time.textContent = formatTime(Date.now());
         wrapper.appendChild(time);
+        saveMessages();
         if (!isOpen) {
           unreadCount++;
           updateBadge();
@@ -385,14 +469,13 @@ interface Message {
         assistantDiv.textContent = errMsg;
         messages.push({ role: "assistant", content: errMsg, timestamp: Date.now() });
 
-        // Store failed message for retry
         lastFailedMessage = text;
         const retryBtn = document.createElement("button");
         retryBtn.className = "retry-btn";
         retryBtn.textContent = config.language === "es" ? "Reintentar" : "Retry";
         retryBtn.addEventListener("click", () => {
           wrapper.remove();
-          messages.pop(); // Remove error message
+          messages.pop();
           if (lastFailedMessage) sendMessage(lastFailedMessage);
         });
         wrapper.appendChild(retryBtn);
@@ -408,6 +491,7 @@ interface Message {
   // Event listeners
   bubble.addEventListener("click", toggleChat);
   closeBtn.addEventListener("click", toggleChat);
+  newChatBtn.addEventListener("click", startNewConversation);
   sendBtn.addEventListener("click", () => sendMessage(input.value));
   input.addEventListener("keydown", (e: KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {

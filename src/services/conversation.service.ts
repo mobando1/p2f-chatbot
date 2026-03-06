@@ -158,3 +158,38 @@ export function getContactInfo(
   const conv = conversations.get(conversationId);
   return { name: conv?.visitorName, email: conv?.visitorEmail };
 }
+
+/** Load contact info from DB for conversation resumption after memory expiry */
+export async function loadContactFromDb(
+  conversationId: string,
+): Promise<{ name?: string; email?: string } | null> {
+  try {
+    if (!process.env.DATABASE_URL) return null;
+    const { getDb } = await import("../db/index.js");
+    const { conversations: convTable } = await import("../db/schema.js");
+    const { eq } = await import("drizzle-orm");
+    const db = getDb();
+
+    const rows = await db
+      .select({
+        visitorName: convTable.visitorName,
+        visitorEmail: convTable.visitorEmail,
+      })
+      .from(convTable)
+      .where(eq(convTable.id, conversationId))
+      .limit(1);
+
+    if (rows.length === 0) return null;
+    const row = rows[0];
+    if (!row.visitorName && !row.visitorEmail) return null;
+    return {
+      name: row.visitorName || undefined,
+      email: row.visitorEmail || undefined,
+    };
+  } catch (err) {
+    logger.warn("Failed to load contact from DB (non-blocking)", {
+      error: err instanceof Error ? err.message : "unknown",
+    });
+    return null;
+  }
+}

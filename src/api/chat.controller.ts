@@ -8,6 +8,7 @@ import {
   addMessage,
   updateContactInfo,
   getContactInfo,
+  loadContactFromDb,
 } from "../services/conversation.service.js";
 import { extractContactInfo } from "../services/contact-extractor.service.js";
 import { checkRateLimit } from "../services/rate-limiter.service.js";
@@ -64,6 +65,19 @@ chatRouter.post("/chat", async (req: Request, res: Response) => {
 
     // Get or create conversation (scoped to project, with sessionId for DB persistence)
     const conversation = getOrCreateConversation(conversationId, language, project.apiKey, sessionId);
+
+    // If this is a resumed conversation (has conversationId but fresh in memory), try loading contact from DB
+    if (conversationId && conversation.messageCount === 0) {
+      const dbContact = await loadContactFromDb(conversationId);
+      if (dbContact) {
+        updateContactInfo(conversation.id, dbContact);
+        logger.info("Contact info restored from DB", {
+          conversationId: conversation.id,
+          hasName: !!dbContact.name,
+          hasEmail: !!dbContact.email,
+        });
+      }
+    }
 
     // Add user message
     addMessage(conversation.id, "user", message);
