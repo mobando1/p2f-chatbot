@@ -50,6 +50,24 @@ function capitalizeName(name: string): string {
     .join(" ");
 }
 
+/** Sanitize extracted name to prevent prompt injection */
+function sanitizeName(name: string): string | undefined {
+  // Only allow letters, spaces, hyphens, apostrophes (covers names like O'Brien, Jean-Pierre)
+  const cleaned = name.replace(/[^a-zA-ZÀ-ÖØ-öø-ÿ\s'-]/g, "").trim();
+  if (cleaned.length === 0 || cleaned.length > 50) return undefined;
+  return cleaned;
+}
+
+/** Validate email format more strictly */
+function validateEmail(email: string): string | undefined {
+  if (email.length > 100) return undefined;
+  // Ensure it has valid structure (not just regex match)
+  const parts = email.split("@");
+  if (parts.length !== 2 || !parts[0] || !parts[1]) return undefined;
+  if (!parts[1].includes(".")) return undefined;
+  return email;
+}
+
 function extractEmail(message: string): string | undefined {
   const match = message.match(EMAIL_REGEX);
   return match ? match[0].toLowerCase() : undefined;
@@ -59,8 +77,10 @@ export function extractContactInfo(message: string): {
   name?: string;
   email?: string;
 } {
+  const rawName = extractName(message);
+  const rawEmail = extractEmail(message);
   return {
-    name: extractName(message),
-    email: extractEmail(message),
+    name: rawName ? sanitizeName(rawName) : undefined,
+    email: rawEmail ? validateEmail(rawEmail) : undefined,
   };
 }

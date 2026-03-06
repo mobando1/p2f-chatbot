@@ -17,6 +17,7 @@ interface WidgetConfig {
 interface Message {
   role: "user" | "assistant";
   content: string;
+  timestamp: number;
 }
 
 (function () {
@@ -50,6 +51,8 @@ interface Message {
   let isOpen = false;
   let isStreaming = false;
   let serverConfig: ServerConfig | null = null;
+  let unreadCount = 0;
+  let currentAbortController: AbortController | null = null;
 
   // Create Shadow DOM
   const host = document.createElement("div");
@@ -67,12 +70,13 @@ interface Message {
   varsStyle.textContent = `:host { --primary: #0A4A6E; --accent: #F59E1C; }`;
   shadow.appendChild(varsStyle);
 
-  // Build UI with placeholders
+  // Build UI
   const container = document.createElement("div");
   container.innerHTML = `
     <button class="chat-bubble" aria-label="Open chat">
       <svg class="icon-chat" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
       <svg class="icon-close" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>
+      <span class="unread-badge" style="display:none"></span>
     </button>
     <div class="chat-panel">
       <div class="chat-header">
@@ -85,8 +89,8 @@ interface Message {
         </div>
         <button class="chat-header-close" aria-label="Close">✕</button>
       </div>
-      <div class="chat-messages"></div>
-      <div class="typing-indicator">
+      <div class="chat-messages" role="log" aria-label="${config.language === "es" ? "Mensajes del chat" : "Chat messages"}" aria-live="polite"></div>
+      <div class="typing-indicator" aria-label="${config.language === "es" ? "Escribiendo..." : "Typing..."}" role="status">
         <div class="typing-dot"></div>
         <div class="typing-dot"></div>
         <div class="typing-dot"></div>
@@ -105,6 +109,7 @@ interface Message {
 
   // Elements
   const bubble = shadow.querySelector(".chat-bubble") as HTMLButtonElement;
+  const badgeEl = shadow.querySelector(".unread-badge") as HTMLSpanElement;
   const panel = shadow.querySelector(".chat-panel") as HTMLDivElement;
   const closeBtn = shadow.querySelector(".chat-header-close") as HTMLButtonElement;
   const headerTitle = shadow.querySelector(".header-title") as HTMLHeadingElement;
@@ -140,9 +145,23 @@ interface Message {
     panel.classList.toggle("visible", isOpen);
     bubble.classList.toggle("open", isOpen);
 
-    if (isOpen && messages.length === 0) {
-      showGreeting();
-      showQuickReplies();
+    if (isOpen) {
+      unreadCount = 0;
+      updateBadge();
+      input.focus();
+      if (messages.length === 0) {
+        showGreeting();
+        showQuickReplies();
+      }
+    }
+  }
+
+  function updateBadge() {
+    if (unreadCount > 0 && !isOpen) {
+      badgeEl.textContent = unreadCount > 9 ? "9+" : String(unreadCount);
+      badgeEl.style.display = "flex";
+    } else {
+      badgeEl.style.display = "none";
     }
   }
 
@@ -159,44 +178,108 @@ interface Message {
       || (config.language === "es"
         ? ["Precios", "Información"]
         : ["Pricing", "Info"]);
-    quickRepliesEl.innerHTML = replies
-      .map((r) => `<button class="quick-reply-btn">${r}</button>`)
-      .join("");
-    quickRepliesEl.querySelectorAll(".quick-reply-btn").forEach((btn) => {
+    quickRepliesEl.innerHTML = "";
+    replies.forEach((r) => {
+      const btn = document.createElement("button");
+      btn.className = "quick-reply-btn";
+      btn.textContent = r;
       btn.addEventListener("click", () => {
-        const text = (btn as HTMLButtonElement).textContent || "";
-        sendMessage(text);
+        sendMessage(r);
         quickRepliesEl.innerHTML = "";
       });
+      quickRepliesEl.appendChild(btn);
+    });
+  }
+
+  function formatTime(ts: number): string {
+    const d = new Date(ts);
+    return d.toLocaleTimeString(config.language === "es" ? "es" : "en", {
+      hour: "numeric",
+      minute: "2-digit",
     });
   }
 
   function appendMessage(role: "user" | "assistant", content: string) {
-    messages.push({ role, content });
+    const ts = Date.now();
+    messages.push({ role, content, timestamp: ts });
+    const wrapper = document.createElement("div");
+    wrapper.className = `message-wrapper ${role}`;
+
     const div = document.createElement("div");
     div.className = `message ${role}`;
-    div.innerHTML = linkify(content);
-    messagesEl.appendChild(div);
+    renderContent(div, content);
+
+    const time = document.createElement("span");
+    time.className = "message-time";
+    time.textContent = formatTime(ts);
+
+    wrapper.appendChild(div);
+    wrapper.appendChild(time);
+    messagesEl.appendChild(wrapper);
     messagesEl.scrollTop = messagesEl.scrollHeight;
+
+    if (!isOpen && role === "assistant") {
+      unreadCount++;
+      updateBadge();
+    }
+
     return div;
   }
 
-  function linkify(text: string): string {
-    text = text.replace(
-      /\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g,
-      '<a href="$2" target="_blank" rel="noopener">$1</a>',
-    );
-    text = text.replace(
-      /(?<!["\(])(https?:\/\/[^\s<\)]+)/g,
-      '<a href="$1" target="_blank" rel="noopener">$1</a>',
-    );
-    text = text.replace(/\n/g, "<br>");
-    return text;
+  /** Safely render text with links using DOM API (prevents XSS) */
+  function renderContent(container: HTMLElement, text: string) {
+    container.innerHTML = "";
+    const lines = text.split("\n");
+    lines.forEach((line, i) => {
+      if (i > 0) container.appendChild(document.createElement("br"));
+      renderLineWithLinks(container, line);
+    });
   }
+
+  function renderLineWithLinks(container: HTMLElement, line: string) {
+    const linkPattern = /\[([^\]]+)\]\((https?:\/\/[^\)]+)\)|(https?:\/\/[^\s<\)]+)/g;
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+
+    while ((match = linkPattern.exec(line)) !== null) {
+      if (match.index > lastIndex) {
+        container.appendChild(document.createTextNode(line.slice(lastIndex, match.index)));
+      }
+      const a = document.createElement("a");
+      a.target = "_blank";
+      a.rel = "noopener";
+      if (match[1] && match[2]) {
+        a.href = match[2];
+        a.textContent = match[1];
+      } else {
+        a.href = match[3];
+        a.textContent = match[3];
+      }
+      container.appendChild(a);
+      lastIndex = match.index + match[0].length;
+    }
+    if (lastIndex < line.length) {
+      container.appendChild(document.createTextNode(line.slice(lastIndex)));
+    }
+  }
+
+  function getErrorMessage(status: number): string {
+    if (config.language === "es") {
+      if (status === 429) return "Demasiados mensajes. Espera un momento e intenta de nuevo.";
+      if (status === 401 || status === 403) return "Error de autenticación. Verifica la configuración.";
+      return "Lo siento, hubo un error. Por favor intenta de nuevo.";
+    }
+    if (status === 429) return "Too many messages. Please wait a moment and try again.";
+    if (status === 401 || status === 403) return "Authentication error. Please check configuration.";
+    return "Sorry, there was an error. Please try again.";
+  }
+
+  let lastFailedMessage: string | null = null;
 
   async function sendMessage(text: string) {
     if (!text.trim() || isStreaming) return;
 
+    lastFailedMessage = null;
     appendMessage("user", text);
     input.value = "";
     isStreaming = true;
@@ -205,9 +288,14 @@ interface Message {
 
     const assistantDiv = document.createElement("div");
     assistantDiv.className = "message assistant";
-    messagesEl.appendChild(assistantDiv);
+    const wrapper = document.createElement("div");
+    wrapper.className = "message-wrapper assistant";
+    wrapper.appendChild(assistantDiv);
+    messagesEl.appendChild(wrapper);
 
     let fullResponse = "";
+
+    currentAbortController = new AbortController();
 
     try {
       const response = await fetch(`${config.apiBaseUrl}/api/v1/chat`, {
@@ -223,6 +311,7 @@ interface Message {
           language: config.language,
           pageUrl: window.location.href,
         }),
+        signal: currentAbortController.signal,
       });
 
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -249,7 +338,7 @@ interface Message {
             const data = JSON.parse(jsonStr);
             if (data.text) {
               fullResponse += data.text;
-              assistantDiv.innerHTML = linkify(fullResponse);
+              renderContent(assistantDiv, fullResponse);
               messagesEl.scrollTop = messagesEl.scrollHeight;
             }
             if (data.conversationId) {
@@ -261,32 +350,56 @@ interface Message {
             }
           } catch (e) {
             if (e instanceof Error && e.message) throw e;
-            // Skip non-JSON lines
           }
         }
       }
 
       if (fullResponse.trim()) {
-        messages.push({ role: "assistant", content: fullResponse });
+        messages.push({ role: "assistant", content: fullResponse, timestamp: Date.now() });
+        // Add timestamp to wrapper
+        const time = document.createElement("span");
+        time.className = "message-time";
+        time.textContent = formatTime(Date.now());
+        wrapper.appendChild(time);
+        if (!isOpen) {
+          unreadCount++;
+          updateBadge();
+        }
       } else {
-        const errMsg =
-          config.language === "es"
-            ? "Lo siento, hubo un error. Por favor intenta de nuevo."
-            : "Sorry, there was an error. Please try again.";
+        const errMsg = getErrorMessage(0);
         assistantDiv.textContent = errMsg;
-        messages.push({ role: "assistant", content: errMsg });
+        messages.push({ role: "assistant", content: errMsg, timestamp: Date.now() });
       }
     } catch (err) {
-      console.error("[chat-widget] Error:", err);
-      typingEl.classList.remove("visible");
-      const errMsg =
-        config.language === "es"
-          ? "Lo siento, hubo un error. Por favor intenta de nuevo."
-          : "Sorry, there was an error. Please try again.";
-      assistantDiv.textContent = errMsg;
-      messages.push({ role: "assistant", content: errMsg });
+      if ((err as Error).name === "AbortError") {
+        assistantDiv.remove();
+        wrapper.remove();
+      } else {
+        console.error("[chat-widget] Error:", err);
+        typingEl.classList.remove("visible");
+
+        const status = err instanceof Error && err.message.startsWith("HTTP ")
+          ? parseInt(err.message.slice(5))
+          : 0;
+        const errMsg = getErrorMessage(status);
+        assistantDiv.textContent = errMsg;
+        messages.push({ role: "assistant", content: errMsg, timestamp: Date.now() });
+
+        // Store failed message for retry
+        lastFailedMessage = text;
+        const retryBtn = document.createElement("button");
+        retryBtn.className = "retry-btn";
+        retryBtn.textContent = config.language === "es" ? "Reintentar" : "Retry";
+        retryBtn.addEventListener("click", () => {
+          wrapper.remove();
+          messages.pop(); // Remove error message
+          if (lastFailedMessage) sendMessage(lastFailedMessage);
+        });
+        wrapper.appendChild(retryBtn);
+      }
     }
 
+    currentAbortController = null;
     isStreaming = false;
     sendBtn.disabled = false;
     input.focus();
@@ -301,6 +414,11 @@ interface Message {
       e.preventDefault();
       sendMessage(input.value);
     }
+  });
+
+  // Abort in-flight requests on page unload
+  window.addEventListener("beforeunload", () => {
+    currentAbortController?.abort();
   });
 
   // Initialize: load project config

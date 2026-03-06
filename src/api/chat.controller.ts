@@ -12,6 +12,7 @@ import {
 import { extractContactInfo } from "../services/contact-extractor.service.js";
 import { checkRateLimit } from "../services/rate-limiter.service.js";
 import { getProjectByApiKey } from "../projects/registry.js";
+import { logger } from "../services/logger.service.js";
 
 const chatRequestSchema = z.object({
   message: z.string().min(1).max(2000),
@@ -41,6 +42,7 @@ function getProject(req: Request, res: Response) {
 }
 
 chatRouter.post("/chat", async (req: Request, res: Response) => {
+  const startTime = Date.now();
   try {
     const project = getProject(req, res);
     if (!project) return;
@@ -53,14 +55,15 @@ chatRouter.post("/chat", async (req: Request, res: Response) => {
 
     const { message, conversationId, sessionId, language } = parsed.data;
 
-    // Rate limit check
-    if (!checkRateLimit(sessionId)) {
+    // Rate limit check (session + IP)
+    if (!checkRateLimit(sessionId, req.ip)) {
+      logger.warn("Rate limited", { sessionId, ip: req.ip });
       res.status(429).json({ error: "Too many messages. Please wait a moment." });
       return;
     }
 
-    // Get or create conversation (scoped to project)
-    const conversation = getOrCreateConversation(conversationId, language, project.apiKey);
+    // Get or create conversation (scoped to project, with sessionId for DB persistence)
+    const conversation = getOrCreateConversation(conversationId, language, project.apiKey, sessionId);
 
     // Add user message
     addMessage(conversation.id, "user", message);
@@ -69,6 +72,11 @@ chatRouter.post("/chat", async (req: Request, res: Response) => {
     const extracted = extractContactInfo(message);
     if (extracted.name || extracted.email) {
       updateContactInfo(conversation.id, extracted);
+      logger.info("Contact info extracted", {
+        conversationId: conversation.id,
+        hasName: !!extracted.name,
+        hasEmail: !!extracted.email,
+      });
     }
 
     // Select model based on conversation state
@@ -98,25 +106,47 @@ chatRouter.post("/chat", async (req: Request, res: Response) => {
         fullResponse += event.data;
         res.write(`event: token\ndata: ${JSON.stringify({ text: event.data })}\n\n`);
       } else if (event.type === "done") {
-        // Save assistant message
-        addMessage(conversation.id, "assistant", fullResponse);
+        const usage = JSON.parse(event.data);
+        const latencyMs = Date.now() - startTime;
+
+        // Save assistant message with metadata
+        addMessage(conversation.id, "assistant", fullResponse, {
+          model,
+          tokens: usage.outputTokens,
+        });
+
+        logger.info("Chat response completed", {
+          conversationId: conversation.id,
+          sessionId,
+          model,
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+          latencyMs,
+          messageCount: conversation.messageCount,
+        });
 
         res.write(
           `event: done\ndata: ${JSON.stringify({
             conversationId: conversation.id,
             model,
-            usage: JSON.parse(event.data),
+            usage,
             contactInfo: getContactInfo(conversation.id),
           })}\n\n`,
         );
       } else if (event.type === "error") {
+        logger.error("Stream error", {
+          conversationId: conversation.id,
+          error: event.data,
+        });
         res.write(`event: error\ndata: ${JSON.stringify({ message: event.data })}\n\n`);
       }
     }
 
     res.end();
   } catch (error) {
-    console.error("Chat error:", error);
+    logger.error("Chat error", {
+      error: error instanceof Error ? error.message : "unknown",
+    });
     if (!res.headersSent) {
       res.status(500).json({ error: "Internal server error" });
     } else {

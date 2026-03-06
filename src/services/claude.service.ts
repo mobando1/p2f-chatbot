@@ -46,16 +46,42 @@ export async function* streamChat(
   }
 }
 
-export function selectModel(messageCount: number, content: string): string {
-  const isSimple =
-    content.length < 50 ||
-    /^(hi|hello|hola|hey|pricing|price|cost|schedule|hours|how much|cuanto|precio|horario)/i.test(
-      content,
-    );
+// Keywords that indicate simple queries (both EN and ES)
+const SIMPLE_PATTERNS =
+  /^(hi|hello|hola|hey|thanks|gracias|ok|okay|yes|no|sí|si|sure|claro|dale)\b/i;
 
-  if (messageCount <= 3 || isSimple) {
+const COMPLEX_INDICATORS =
+  /\b(how|why|explain|compare|difference|benefit|recommend|suggest|best|cómo|por qué|explica|compara|diferencia|beneficio|recomienda|mejor)\b/i;
+
+export function selectModel(messageCount: number, content: string): string {
+  const trimmed = content.trim();
+
+  // Very short greetings/confirmations → Haiku
+  if (trimmed.length < 30 && SIMPLE_PATTERNS.test(trimmed)) {
     return "claude-haiku-4-5-20251001";
   }
 
-  return "claude-sonnet-4-6-20250514";
+  // Multiple questions in one message → Sonnet
+  const questionMarks = (trimmed.match(/\?/g) || []).length;
+  if (questionMarks > 1) {
+    return "claude-sonnet-4-6-20250514";
+  }
+
+  // Complex question keywords → Sonnet
+  if (COMPLEX_INDICATORS.test(trimmed) && trimmed.length > 40) {
+    return "claude-sonnet-4-6-20250514";
+  }
+
+  // Early in conversation, use Haiku for speed
+  if (messageCount <= 3) {
+    return "claude-haiku-4-5-20251001";
+  }
+
+  // Longer messages later in conversation → Sonnet
+  if (trimmed.length > 80) {
+    return "claude-sonnet-4-6-20250514";
+  }
+
+  // Default to Haiku for cost efficiency
+  return "claude-haiku-4-5-20251001";
 }

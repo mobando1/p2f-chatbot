@@ -1,8 +1,9 @@
 import type { ProjectConfig } from "./types.js";
+import { config } from "../config.js";
 
 export const p2fProject: ProjectConfig = {
   name: "Passport to Fluency",
-  apiKey: "pk_p2f_live_001",
+  apiKey: config.P2F_API_KEY,
   defaultLanguage: "en",
   salesGoals: [
     "Guide the visitor to book a FREE trial class (primary goal)",
