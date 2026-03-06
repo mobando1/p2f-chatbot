@@ -7,6 +7,8 @@ interface Conversation {
   language: "en" | "es";
   messageCount: number;
   createdAt: number;
+  visitorName?: string;
+  visitorEmail?: string;
 }
 
 // In-memory store for MVP. Migrate to DB later.
@@ -63,4 +65,21 @@ export function addMessage(
 
 export function getConversation(id: string): Conversation | undefined {
   return conversations.get(id);
+}
+
+export function updateContactInfo(
+  conversationId: string,
+  info: { name?: string; email?: string },
+): void {
+  const conv = conversations.get(conversationId);
+  if (!conv) return;
+  if (info.name && !conv.visitorName) conv.visitorName = info.name;
+  if (info.email && !conv.visitorEmail) conv.visitorEmail = info.email;
+}
+
+export function getContactInfo(
+  conversationId: string,
+): { name?: string; email?: string } {
+  const conv = conversations.get(conversationId);
+  return { name: conv?.visitorName, email: conv?.visitorEmail };
 }

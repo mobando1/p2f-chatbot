@@ -6,7 +6,10 @@ import { assembleSystemPrompt } from "../services/prompt.service.js";
 import {
   getOrCreateConversation,
   addMessage,
+  updateContactInfo,
+  getContactInfo,
 } from "../services/conversation.service.js";
+import { extractContactInfo } from "../services/contact-extractor.service.js";
 import { checkRateLimit } from "../services/rate-limiter.service.js";
 import { getProjectByApiKey } from "../projects/registry.js";
 
@@ -62,11 +65,18 @@ chatRouter.post("/chat", async (req: Request, res: Response) => {
     // Add user message
     addMessage(conversation.id, "user", message);
 
+    // Extract and store contact info from user message
+    const extracted = extractContactInfo(message);
+    if (extracted.name || extracted.email) {
+      updateContactInfo(conversation.id, extracted);
+    }
+
     // Select model based on conversation state
     const model = selectModel(conversation.messageCount, message);
 
-    // Build system prompt dynamically from project config
-    const systemPrompt = assembleSystemPrompt(language, project);
+    // Build system prompt dynamically from project config (with contact personalization)
+    const contactInfo = getContactInfo(conversation.id);
+    const systemPrompt = assembleSystemPrompt(language, project, contactInfo);
 
     // Set up SSE
     res.writeHead(200, {
@@ -96,6 +106,7 @@ chatRouter.post("/chat", async (req: Request, res: Response) => {
             conversationId: conversation.id,
             model,
             usage: JSON.parse(event.data),
+            contactInfo: getContactInfo(conversation.id),
           })}\n\n`,
         );
       } else if (event.type === "error") {
