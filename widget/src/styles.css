@@ -272,6 +272,34 @@
 .powered-by a { color: #9ca3af; text-decoration: none; }
 .powered-by a:hover { text-decoration: underline; }
 
+.retry-btn {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 4px 12px;
+  border: 1px solid var(--primary, #0A4A6E);
+  border-radius: 12px;
+  background: white;
+  color: var(--primary, #0A4A6E);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.retry-btn:hover {
+  background: var(--primary, #0A4A6E);
+  color: white;
+}
+
+/* Respect reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+  .chat-panel.visible { animation: none; }
+  .chat-bubble { transition: none; }
+  .typing-dot { animation: none; }
+  .quick-reply-btn { transition: none; }
+  .chat-send { transition: none; }
+  .retry-btn { transition: none; }
+}
+
 /* Mobile */
 @media (max-width: 480px) {
   .chat-panel {

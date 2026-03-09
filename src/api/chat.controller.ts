@@ -7,7 +7,7 @@ import {
   getOrCreateConversation,
   addMessage,
 } from "../services/conversation.service.js";
-import { checkRateLimit } from "../services/rate-limiter.service.js";
+import { checkRateLimit, getClientIp } from "../services/rate-limiter.service.js";
 import { getProjectByApiKey } from "../projects/registry.js";
 
 const chatRequestSchema = z.object({
@@ -38,20 +38,24 @@ function getProject(req: Request, res: Response) {
 }
 
 chatRouter.post("/chat", async (req: Request, res: Response) => {
+  const requestId = crypto.randomUUID().slice(0, 8);
+
   try {
     const project = getProject(req, res);
     if (!project) return;
 
     const parsed = chatRequestSchema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: "Invalid request", details: parsed.error.issues });
+      console.warn(`[${requestId}] Invalid request body`);
+      res.status(400).json({ error: "Invalid request" });
       return;
     }
 
     const { message, conversationId, sessionId, language } = parsed.data;
 
-    // Rate limit check
-    if (!checkRateLimit(sessionId)) {
+    // Rate limit by IP (not client-generated sessionId)
+    const clientIp = getClientIp(req);
+    if (!checkRateLimit(clientIp)) {
       res.status(429).json({ error: "Too many messages. Please wait a moment." });
       return;
     }
@@ -68,6 +72,8 @@ chatRouter.post("/chat", async (req: Request, res: Response) => {
     // Build system prompt dynamically from project config
     const systemPrompt = assembleSystemPrompt(language, project);
 
+    console.log(`[${requestId}] Chat: ip=${clientIp} session=${sessionId.slice(0, 8)} model=${model}`);
+
     // Set up SSE
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
@@ -76,36 +82,60 @@ chatRouter.post("/chat", async (req: Request, res: Response) => {
       "X-Accel-Buffering": "no",
     });
 
+    // Handle client disconnect
+    let clientDisconnected = false;
+    req.on("close", () => { clientDisconnected = true; });
+
     let fullResponse = "";
 
-    // Stream the response
-    for await (const event of streamChat(
-      systemPrompt,
-      conversation.messages,
-      model,
-    )) {
-      if (event.type === "text") {
-        fullResponse += event.data;
-        res.write(`event: token\ndata: ${JSON.stringify({ text: event.data })}\n\n`);
-      } else if (event.type === "done") {
-        // Save assistant message
-        addMessage(conversation.id, "assistant", fullResponse);
-
-        res.write(
-          `event: done\ndata: ${JSON.stringify({
-            conversationId: conversation.id,
-            model,
-            usage: JSON.parse(event.data),
-          })}\n\n`,
-        );
-      } else if (event.type === "error") {
-        res.write(`event: error\ndata: ${JSON.stringify({ message: event.data })}\n\n`);
+    // Heartbeat to keep connection alive through proxies
+    const heartbeat = setInterval(() => {
+      if (!clientDisconnected) {
+        res.write(": heartbeat\n\n");
       }
+    }, 15000);
+
+    try {
+      // Stream the response
+      for await (const event of streamChat(
+        systemPrompt,
+        conversation.messages,
+        model,
+      )) {
+        if (clientDisconnected) break;
+
+        if (event.type === "text") {
+          fullResponse += event.data;
+          res.write(`event: token\ndata: ${JSON.stringify({ text: event.data })}\n\n`);
+        } else if (event.type === "done") {
+          // Save assistant message
+          addMessage(conversation.id, "assistant", fullResponse);
+
+          let usage = {};
+          try {
+            usage = JSON.parse(event.data);
+          } catch {
+            console.warn(`[${requestId}] Failed to parse usage data`);
+          }
+
+          res.write(
+            `event: done\ndata: ${JSON.stringify({
+              conversationId: conversation.id,
+              model,
+              usage,
+            })}\n\n`,
+          );
+        } else if (event.type === "error") {
+          res.write(`event: error\ndata: ${JSON.stringify({ message: event.data })}\n\n`);
+        }
+      }
+    } finally {
+      clearInterval(heartbeat);
     }
 
     res.end();
   } catch (error) {
-    console.error("Chat error:", error);
+    console.error(`[${requestId}] Chat error:`, error);
     if (!res.headersSent) {
       res.status(500).json({ error: "Internal server error" });
     } else {

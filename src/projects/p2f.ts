@@ -79,11 +79,16 @@ export const p2fProject: ProjectConfig = {
     ],
     faqs: [
       { q: "How long are classes?", a: "40 minutes — optimal for focused language learning." },
-      { q: "Are there contracts?", a: "No contracts. Cancel anytime." },
+      { q: "Are there contracts?", a: "No contracts. Cancel anytime. You can also pause your subscription if needed." },
       { q: "What do I need?", a: "Just a computer or tablet with internet, camera, and microphone. 100% online." },
       { q: "Can I change my schedule?", a: "Yes! Scheduling is completely flexible, available 24/7." },
       { q: "Are instructors native speakers?", a: "Yes! Spanish instructors are native Latin American speakers. English instructors are native American English speakers." },
-      { q: "Is the free trial really free?", a: "Yes, 100% free. No credit card required. A full 40-minute class." },
+      { q: "Is the free trial really free?", a: "Yes, 100% free. No credit card required. A full 40-minute class with a real instructor." },
+      { q: "What payment methods do you accept?", a: "We accept all major credit/debit cards. Payment is processed securely online." },
+      { q: "What if I miss a class?", a: "You can reschedule with advance notice. We understand life happens — our flexible scheduling makes it easy to find another time." },
+      { q: "Do you provide materials?", a: "Yes! Your instructor prepares personalized materials for each session based on your level and goals. No textbooks to buy." },
+      { q: "What levels do you teach?", a: "All levels — from complete beginners to advanced speakers looking to perfect their fluency. Your instructor adapts to your exact level." },
+      { q: "How is the free trial different from regular classes?", a: "It's the same! A full 40-minute class with a native instructor. We want you to experience exactly what regular classes are like." },
     ],
     bookingUrls: {
       "Adults learning Spanish": "https://api.leadconnectorhq.com/widget/booking/g27wbcMQU9YvigMrJfVK",

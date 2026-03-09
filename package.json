@@ -7,7 +7,8 @@
   },
   "scripts": {
     "dev": "NODE_ENV=development tsx watch src/index.ts",
-    "build": "npm run build:server && npm run build:widget",
+    "typecheck": "tsc --noEmit",
+    "build": "npm run typecheck && npm run build:server && npm run build:widget",
     "build:server": "esbuild src/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist",
     "build:widget": "cd widget && npx vite build",
     "start": "NODE_ENV=production node dist/index.js",

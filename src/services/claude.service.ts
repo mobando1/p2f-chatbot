@@ -3,6 +3,8 @@ import type { MessageParam } from "@anthropic-ai/sdk/resources/messages.js";
 
 const client = new Anthropic();
 
+const STREAM_TIMEOUT_MS = 30_000;
+
 export interface StreamEvent {
   type: "text" | "done" | "error";
   data: string;
@@ -21,28 +23,34 @@ export async function* streamChat(
       messages,
     });
 
-    for await (const event of stream) {
-      if (
-        event.type === "content_block_delta" &&
-        event.delta.type === "text_delta"
-      ) {
-        yield { type: "text", data: event.delta.text };
-      }
-    }
+    // Timeout: abort if no completion within limit
+    const timeout = setTimeout(() => stream.abort(), STREAM_TIMEOUT_MS);
 
-    const finalMessage = await stream.finalMessage();
-    yield {
-      type: "done",
-      data: JSON.stringify({
-        inputTokens: finalMessage.usage.input_tokens,
-        outputTokens: finalMessage.usage.output_tokens,
-      }),
-    };
+    try {
+      for await (const event of stream) {
+        if (
+          event.type === "content_block_delta" &&
+          event.delta.type === "text_delta"
+        ) {
+          yield { type: "text", data: event.delta.text };
+        }
+      }
+
+      const finalMessage = await stream.finalMessage();
+      yield {
+        type: "done",
+        data: JSON.stringify({
+          inputTokens: finalMessage.usage.input_tokens,
+          outputTokens: finalMessage.usage.output_tokens,
+        }),
+      };
+    } finally {
+      clearTimeout(timeout);
+    }
   } catch (error) {
-    yield {
-      type: "error",
-      data: error instanceof Error ? error.message : "Unknown error",
-    };
+    const message = error instanceof Error ? error.message : "Unknown error";
+    console.error("[claude] Stream error:", message);
+    yield { type: "error", data: message };
   }
 }
 

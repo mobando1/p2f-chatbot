@@ -8,13 +8,13 @@ const buckets = new Map<string, RateBucket>();
 const MAX_TOKENS = 10; // max messages per window
 const REFILL_RATE = 10; // tokens per minute
 
-export function checkRateLimit(sessionId: string): boolean {
+export function checkRateLimit(identifier: string): boolean {
   const now = Date.now();
-  let bucket = buckets.get(sessionId);
+  let bucket = buckets.get(identifier);
 
   if (!bucket) {
     bucket = { tokens: MAX_TOKENS, lastRefill: now };
-    buckets.set(sessionId, bucket);
+    buckets.set(identifier, bucket);
   }
 
   // Refill tokens based on elapsed time
@@ -28,6 +28,15 @@ export function checkRateLimit(sessionId: string): boolean {
 
   bucket.tokens -= 1;
   return true;
+}
+
+// Extract client IP from request (supports proxies like Railway)
+export function getClientIp(req: { headers: Record<string, string | string[] | undefined>; socket: { remoteAddress?: string } }): string {
+  const forwarded = req.headers["x-forwarded-for"];
+  if (typeof forwarded === "string") {
+    return forwarded.split(",")[0].trim();
+  }
+  return req.socket.remoteAddress || "unknown";
 }
 
 // Clean up stale buckets every 10 minutes

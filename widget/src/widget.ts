@@ -19,6 +19,25 @@ interface Message {
   content: string;
 }
 
+// Safe localStorage wrapper (incognito mode fallback)
+const storage = {
+  _fallback: new Map<string, string>(),
+  getItem(key: string): string | null {
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return this._fallback.get(key) ?? null;
+    }
+  },
+  setItem(key: string, value: string): void {
+    try {
+      localStorage.setItem(key, value);
+    } catch {
+      this._fallback.set(key, value);
+    }
+  },
+};
+
 (function () {
   const scriptTag = document.currentScript as HTMLScriptElement;
   if (!scriptTag) return;
@@ -42,9 +61,9 @@ interface Message {
   const keyPrefix = apiKey.slice(0, 12);
   const SESSION_KEY = `chat_session_${keyPrefix}`;
   const CONV_KEY = `chat_conv_${keyPrefix}`;
-  let sessionId = localStorage.getItem(SESSION_KEY) || crypto.randomUUID();
-  localStorage.setItem(SESSION_KEY, sessionId);
-  let conversationId: string | null = localStorage.getItem(CONV_KEY);
+  let sessionId = storage.getItem(SESSION_KEY) || crypto.randomUUID();
+  storage.setItem(SESSION_KEY, sessionId);
+  let conversationId: string | null = storage.getItem(CONV_KEY);
 
   const messages: Message[] = [];
   let isOpen = false;
@@ -74,7 +93,7 @@ interface Message {
       <svg class="icon-chat" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
       <svg class="icon-close" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>
     </button>
-    <div class="chat-panel">
+    <div class="chat-panel" role="dialog" aria-label="Chat">
       <div class="chat-header">
         <div class="chat-header-info">
           <div class="chat-header-avatar">💬</div>
@@ -85,15 +104,15 @@ interface Message {
         </div>
         <button class="chat-header-close" aria-label="Close">✕</button>
       </div>
-      <div class="chat-messages"></div>
-      <div class="typing-indicator">
+      <div class="chat-messages" role="log" aria-live="polite"></div>
+      <div class="typing-indicator" aria-label="${config.language === "es" ? "Escribiendo..." : "Typing..."}">
         <div class="typing-dot"></div>
         <div class="typing-dot"></div>
         <div class="typing-dot"></div>
       </div>
       <div class="quick-replies"></div>
       <div class="chat-input-area">
-        <input class="chat-input" placeholder="${config.language === "es" ? "Escribe tu mensaje..." : "Type your message..."}" maxlength="2000" />
+        <input class="chat-input" aria-label="${config.language === "es" ? "Escribe tu mensaje" : "Type your message"}" placeholder="${config.language === "es" ? "Escribe tu mensaje..." : "Type your message..."}" maxlength="2000" />
         <button class="chat-send" aria-label="Send">
           <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
         </button>
@@ -140,9 +159,12 @@ interface Message {
     panel.classList.toggle("visible", isOpen);
     bubble.classList.toggle("open", isOpen);
 
-    if (isOpen && messages.length === 0) {
-      showGreeting();
-      showQuickReplies();
+    if (isOpen) {
+      if (messages.length === 0) {
+        showGreeting();
+        showQuickReplies();
+      }
+      input.focus();
     }
   }
 
@@ -160,7 +182,7 @@ interface Message {
         ? ["Precios", "Información"]
         : ["Pricing", "Info"]);
     quickRepliesEl.innerHTML = replies
-      .map((r) => `<button class="quick-reply-btn">${r}</button>`)
+      .map((r) => `<button class="quick-reply-btn">${escapeHtml(r)}</button>`)
       .join("");
     quickRepliesEl.querySelectorAll(".quick-reply-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -169,6 +191,12 @@ interface Message {
         quickRepliesEl.innerHTML = "";
       });
     });
+  }
+
+  function escapeHtml(text: string): string {
+    const div = document.createElement("div");
+    div.textContent = text;
+    return div.innerHTML;
   }
 
   function appendMessage(role: "user" | "assistant", content: string) {
@@ -182,10 +210,14 @@ interface Message {
   }
 
   function linkify(text: string): string {
+    // Escape HTML first to prevent XSS
+    text = escapeHtml(text);
+    // Convert markdown links [text](url)
     text = text.replace(
       /\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g,
       '<a href="$2" target="_blank" rel="noopener">$1</a>',
     );
+    // Convert plain URLs
     text = text.replace(
       /(?<!["\(])(https?:\/\/[^\s<\)]+)/g,
       '<a href="$1" target="_blank" rel="noopener">$1</a>',
@@ -194,13 +226,50 @@ interface Message {
     return text;
   }
 
+  function isScrolledToBottom(): boolean {
+    const threshold = 50;
+    return messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < threshold;
+  }
+
+  function scrollToBottomIfNeeded() {
+    if (isScrolledToBottom()) {
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+  }
+
+  function getErrorMessage(err: unknown): string {
+    if (err instanceof Error) {
+      const msg = err.message;
+      if (msg.startsWith("HTTP 429")) {
+        return config.language === "es"
+          ? "Estás enviando mensajes muy rápido. Espera un momento."
+          : "You're sending messages too fast. Please wait a moment.";
+      }
+      if (msg.startsWith("HTTP 401")) {
+        return config.language === "es"
+          ? "Error de autenticación. Contacta al soporte."
+          : "Authentication error. Please contact support.";
+      }
+      if (msg === "AbortError" || msg === "The user aborted a request.") {
+        return config.language === "es"
+          ? "La respuesta tardó demasiado. Por favor intenta de nuevo."
+          : "Response took too long. Please try again.";
+      }
+    }
+    return config.language === "es"
+      ? "Lo siento, hubo un error. Por favor intenta de nuevo."
+      : "Sorry, there was an error. Please try again.";
+  }
+
   async function sendMessage(text: string) {
     if (!text.trim() || isStreaming) return;
 
-    appendMessage("user", text);
-    input.value = "";
+    // Set streaming flag BEFORE any async work (prevents double-send)
     isStreaming = true;
     sendBtn.disabled = true;
+
+    appendMessage("user", text);
+    input.value = "";
     typingEl.classList.add("visible");
 
     const assistantDiv = document.createElement("div");
@@ -208,6 +277,8 @@ interface Message {
     messagesEl.appendChild(assistantDiv);
 
     let fullResponse = "";
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
 
     try {
       const response = await fetch(`${config.apiBaseUrl}/api/v1/chat`, {
@@ -223,6 +294,7 @@ interface Message {
           language: config.language,
           pageUrl: window.location.href,
         }),
+        signal: controller.signal,
       });
 
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -234,57 +306,75 @@ interface Message {
       typingEl.classList.remove("visible");
       let buffer = "";
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
 
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
 
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          const jsonStr = line.slice(6);
-          try {
-            const data = JSON.parse(jsonStr);
-            if (data.text) {
-              fullResponse += data.text;
-              assistantDiv.innerHTML = linkify(fullResponse);
-              messagesEl.scrollTop = messagesEl.scrollHeight;
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            const jsonStr = line.slice(6);
+            try {
+              const data = JSON.parse(jsonStr);
+              if (data.text) {
+                fullResponse += data.text;
+                assistantDiv.innerHTML = linkify(fullResponse);
+                scrollToBottomIfNeeded();
+              }
+              if (data.conversationId) {
+                conversationId = data.conversationId;
+                storage.setItem(CONV_KEY, conversationId!);
+              }
+              if (data.message && !data.text) {
+                throw new Error(data.message);
+              }
+            } catch (e) {
+              if (e instanceof Error && e.message) throw e;
             }
-            if (data.conversationId) {
-              conversationId = data.conversationId;
-              localStorage.setItem(CONV_KEY, conversationId!);
-            }
-            if (data.message && !data.text) {
-              throw new Error(data.message);
-            }
-          } catch (e) {
-            if (e instanceof Error && e.message) throw e;
-            // Skip non-JSON lines
           }
         }
+      } finally {
+        reader.releaseLock();
       }
 
       if (fullResponse.trim()) {
         messages.push({ role: "assistant", content: fullResponse });
       } else {
-        const errMsg =
-          config.language === "es"
-            ? "Lo siento, hubo un error. Por favor intenta de nuevo."
-            : "Sorry, there was an error. Please try again.";
+        const errMsg = getErrorMessage(null);
         assistantDiv.textContent = errMsg;
         messages.push({ role: "assistant", content: errMsg });
       }
     } catch (err) {
       console.error("[chat-widget] Error:", err);
       typingEl.classList.remove("visible");
-      const errMsg =
-        config.language === "es"
-          ? "Lo siento, hubo un error. Por favor intenta de nuevo."
-          : "Sorry, there was an error. Please try again.";
-      assistantDiv.textContent = errMsg;
+      const errMsg = getErrorMessage(err);
+      assistantDiv.innerHTML = "";
+
+      const errText = document.createElement("span");
+      errText.textContent = errMsg;
+      assistantDiv.appendChild(errText);
+
+      // Retry button
+      const retryBtn = document.createElement("button");
+      retryBtn.className = "retry-btn";
+      retryBtn.textContent = config.language === "es" ? "Reintentar" : "Retry";
+      retryBtn.addEventListener("click", () => {
+        assistantDiv.remove();
+        messages.pop(); // remove error message
+        messages.pop(); // remove user message that failed
+        isStreaming = false;
+        sendBtn.disabled = false;
+        sendMessage(text);
+      });
+      assistantDiv.appendChild(retryBtn);
+
       messages.push({ role: "assistant", content: errMsg });
+    } finally {
+      clearTimeout(timeout);
     }
 
     isStreaming = false;
@@ -300,6 +390,13 @@ interface Message {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       sendMessage(input.value);
+    }
+  });
+
+  // Close on Escape
+  panel.addEventListener("keydown", (e: KeyboardEvent) => {
+    if (e.key === "Escape" && isOpen) {
+      toggleChat();
     }
   });
 
